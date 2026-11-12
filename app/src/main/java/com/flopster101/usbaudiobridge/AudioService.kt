@@ -20,8 +20,10 @@ import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 
 class AudioService : Service() {
 
@@ -45,6 +47,13 @@ class AudioService : Service() {
         const val EXTRA_PERIOD = "period"
         const val EXTRA_BUFFER = "buffer"
         const val EXTRA_ACTIVE_DIRECTIONS = "activeDirections"
+        const val ACTION_RECORDING_CHANGED = "com.flopster101.usbaudiobridge.RECORDING_CHANGED"
+        const val EXTRA_RECORDING_RUNNING = "recordingRunning"
+        const val EXTRA_RECORDING_PENDING = "recordingPending"
+        const val EXTRA_RECORDING_NAME = "recordingName"
+        const val EXTRA_RECORDING_BYTES = "recordingBytes"
+        const val EXTRA_RECORDING_RATE = "recordingRate"
+        const val EXTRA_RECORDING_ERROR = "recordingError"
 
         // State Codes matching Native
         const val STATE_STOPPED = 0
@@ -164,6 +173,9 @@ class AudioService : Service() {
     external fun stopAudioBridge()
     external fun setNativeSpeakerMute(muted: Boolean)
     external fun setNativeMicMute(muted: Boolean)
+    external fun writeRecordingTest(data: ByteArray)
+    external fun startAudioRecorder(fd: Int, format: Int, sampleRate: Int): Boolean
+    external fun stopAudioRecorder(): Boolean
 
     // Called from C++ JNI
     fun onNativeLog(msg: String) {
@@ -180,6 +192,7 @@ class AudioService : Service() {
         serviceScope.launch {
             Log.e(TAG, "Stopping bridge due to native error: $msg")
 
+            stopRecording()
             // Clean up native side immediately
             stopAudioBridge()
 
@@ -197,11 +210,44 @@ class AudioService : Service() {
     fun onNativeFinished() {
         serviceScope.launch {
             Log.d(TAG, "Bridge finished normally")
+            stopRecording()
             isBridgeRunning = false
             lastNativeState = STATE_STOPPED
             mediaSession?.isActive = false
             updateNotification(getStatusText(), false)
             updateUiState()
+        }
+    }
+
+    // Called from C++ JNI
+    fun onNativeRecordingProgress(bytes: Long) {
+        recordingBytes = bytes
+        broadcastRecordingState()
+    }
+
+    // Called from C++ JNI
+    fun onNativeRecordingStopped(error: String) {
+        val wasActive = isRecordingActive
+        isRecordingActive = false
+        recordingError = error.ifEmpty { null }
+        if (wasActive) {
+            try {
+                if (recordingError == null) {
+                    recordingStore.completeRecording()
+                    broadcastLog("[App] Recording saved: ${recordingStore.lastFileName}")
+                } else {
+                    recordingStore.discardLastFile()
+                    broadcastLog("[App] Recording failed; partial file discarded")
+                }
+            } catch (e: Exception) {
+                recordingError = e.message ?: "Could not publish recording"
+                broadcastLog("[App] $recordingError")
+            }
+        }
+        serviceScope.launch {
+            stopAudioRecorder()
+            isRecordingStopping = false
+            broadcastRecordingState()
         }
     }
 
@@ -298,6 +344,13 @@ class AudioService : Service() {
         private set
 
     private lateinit var settingsRepo: SettingsRepository
+    private lateinit var recordingStore: AudioRecordingStore
+    private var recordingStartJob: Job? = null
+    @Volatile private var isRecordingActive = false
+    @Volatile private var isRecordingStopping = false
+    @Volatile private var recordingBytes = 0L
+    @Volatile private var recordingSampleRate = 48000
+    @Volatile private var recordingError: String? = null
     private var lastNativeState = STATE_STOPPED
     private var lastErrorMsg = ""
 
@@ -332,6 +385,7 @@ class AudioService : Service() {
     override fun onCreate() {
         super.onCreate()
         settingsRepo = SettingsRepository(this)
+        recordingStore = AudioRecordingStore(this, settingsRepo)
         createNotificationChannel()
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "UsbAudioMonitor::BridgeLock")
@@ -402,6 +456,8 @@ class AudioService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopRecording()
+        stopAudioRecorder()
         serviceJob.cancel()
         unregisterReceiver(usbReceiver)
         unregisterReceiver(audioNoisyReceiver)
@@ -541,11 +597,96 @@ class AudioService : Service() {
         }
     }
 
+    fun toggleRecording() {
+        if (isRecordingActive) {
+            stopRecording()
+            return
+        }
+        if (recordingStartJob?.isActive == true || isRecordingStopping) return
+        if (!isBridgeRunning || (lastActiveDirections and 1) == 0) {
+            broadcastLog("[App] Start host-to-speaker capture before recording.")
+            return
+        }
+        val format = settingsRepo.getRecordingFormat()
+        recordingBytes = 0L
+        recordingSampleRate = lastSampleRate
+        recordingError = null
+        recordingStartJob = serviceScope.launch(Dispatchers.IO) {
+            var descriptor = -1
+            var descriptorTransferred = false
+            try {
+                val output = recordingStore.open(format)
+                descriptor = output.descriptor
+                ensureActive()
+                descriptorTransferred = true
+                if (!startAudioRecorder(descriptor, format, recordingSampleRate)) {
+                    recordingStore.discardLastFile()
+                    broadcastRecordingError("Could not start ${if (format == SettingsRepository.RECORDING_FORMAT_FLAC) "FLAC" else "WAV"} recorder")
+                } else if (!isActive) {
+                    stopAudioRecorder()
+                    recordingStore.discardLastFile()
+                } else {
+                    isRecordingActive = true
+                    recordingError = null
+                    broadcastLog("[App] Recording ${output.name}")
+                    broadcastRecordingState()
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                if (descriptor >= 0 && !descriptorTransferred) android.os.ParcelFileDescriptor.adoptFd(descriptor).close()
+                recordingStore.discardLastFile()
+                throw e
+            } catch (e: Exception) {
+                if (descriptor >= 0 && !descriptorTransferred) android.os.ParcelFileDescriptor.adoptFd(descriptor).close()
+                Log.e(TAG, "Could not create recording", e)
+                recordingStore.discardLastFile()
+                broadcastRecordingError(e.message ?: "Could not create recording file")
+            }
+        }
+        recordingStartJob?.invokeOnCompletion {
+            serviceScope.launch { broadcastRecordingState() }
+        }
+    }
+
+    fun stopRecording() {
+        recordingStartJob?.cancel()
+        recordingStartJob = null
+        if (isRecordingStopping) return
+        isRecordingStopping = true
+        broadcastRecordingState()
+        serviceScope.launch(Dispatchers.IO) {
+            if (!stopAudioRecorder()) {
+                isRecordingStopping = false
+                broadcastRecordingState()
+            }
+        }
+    }
+
+    private fun broadcastRecordingError(error: String) {
+        recordingError = error
+        broadcastLog("[App] $error")
+        broadcastRecordingState()
+    }
+
+    fun broadcastRecordingState() {
+        sendBroadcast(Intent(ACTION_RECORDING_CHANGED).apply {
+            setPackage(packageName)
+            putExtra(EXTRA_RECORDING_RUNNING, isRecordingActive)
+            putExtra(EXTRA_RECORDING_PENDING, recordingStartJob?.isActive == true || isRecordingStopping)
+            putExtra(EXTRA_RECORDING_NAME, recordingStore.lastFileName)
+            putExtra(EXTRA_RECORDING_BYTES, recordingBytes)
+            putExtra(EXTRA_RECORDING_RATE, recordingSampleRate)
+            putExtra(EXTRA_RECORDING_ERROR, recordingError)
+        })
+    }
+
+    fun createRecordingShareIntent(): Intent? = recordingStore.createShareIntent()
+
     fun stopAudioOnly() {
         // Allow stopping even if bridge not running, to clear Error state
         if (!isBridgeRunning && lastNativeState != STATE_ERROR) return
 
         broadcastLog("[App] Stopping audio capture...")
+        stopRecording()
         stopAudioBridge()
         isBridgeRunning = false
         lastNativeState = STATE_STOPPED
@@ -618,6 +759,7 @@ class AudioService : Service() {
             isBridgeRunning = false
             lastNativeState = STATE_STOPPED
             lastErrorMsg = ""
+            stopRecording()
 
             // Deactivate MediaSession
             mediaSession?.isActive = false

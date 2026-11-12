@@ -2,9 +2,11 @@
 
 #include <chrono>
 #include <thread>
+#include <unistd.h>
 
 #include "core/bridge.h"
 #include "logging/logging.h"
+#include "recording/audio_recorder.h"
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
   javaVM = vm;
@@ -60,4 +62,39 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_flopster101_usbaudiobridge_AudioService_setNativeMicMute(
     JNIEnv *env, jobject /* this */, jboolean muted) {
     isMicMuted = muted;
+}
+
+extern std::atomic<bool> audioRecorderAvailable;
+extern std::mutex audioRecorderMutex;
+extern std::unique_ptr<AudioRecorder> audioRecorder;
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_flopster101_usbaudiobridge_AudioService_startAudioRecorder(
+    JNIEnv *env, jobject /* this */, jint fd, jint format, jint sampleRate) {
+  std::lock_guard<std::mutex> lock(audioRecorderMutex);
+  if (audioRecorder) {
+    close(fd);
+    return false;
+  }
+  auto recorder = std::make_unique<AudioRecorder>(fd, format, sampleRate);
+  if (!recorder->start())
+    return false;
+  audioRecorder = std::move(recorder);
+  audioRecorderAvailable.store(true, std::memory_order_release);
+  return true;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_flopster101_usbaudiobridge_AudioService_stopAudioRecorder(
+    JNIEnv *env, jobject /* this */) {
+  audioRecorderAvailable.store(false, std::memory_order_release);
+  std::unique_ptr<AudioRecorder> recorder;
+  {
+    std::lock_guard<std::mutex> lock(audioRecorderMutex);
+    recorder = std::move(audioRecorder);
+  }
+  if (!recorder)
+    return false;
+  recorder->stop();
+  return true;
 }

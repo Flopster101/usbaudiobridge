@@ -17,4 +17,6 @@ extern std::thread bridgeThread;
 void bridgeTask(int card, int device, int bufferSizeFrames, int periodSizeFrames, int engineType,
                 int sampleRate, int activeDirections, int micSource);
 
+void writeAudioRecorder(const uint8_t *data, size_t size);
+
 #endif  // BRIDGE_H

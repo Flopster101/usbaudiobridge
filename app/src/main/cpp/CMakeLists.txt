@@ -30,15 +30,19 @@ add_library(usbaudio SHARED
     audio/java_audio_track_engine.cpp
     audio/oboe_engine.cpp
     core/bridge.cpp
+    recording/audio_recorder.cpp
+    $<$<CONFIG:Debug>:${CMAKE_SOURCE_DIR}/../../debug/cpp/recorder_test.cpp>
 )
 
 # Link libraries
 find_library(log-lib log)
 find_library(aaudio-lib aaudio)
+find_library(mediandk-lib mediandk REQUIRED)
 
 target_link_libraries(usbaudio
     tinyalsa
     oboe
     ${log-lib}
     ${aaudio-lib}
+    ${mediandk-lib}
     OpenSLES)

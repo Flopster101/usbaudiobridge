@@ -32,6 +32,8 @@ fun AppNavigation(
     state: MainUiState,
     onToggleGadget: (Boolean) -> Unit,
     onToggleCapture: () -> Unit,
+    onToggleRecording: () -> Unit,
+    onShareRecording: () -> Unit,
     onBufferSizeChange: (Float) -> Unit,
     onBufferModeChange: (Int) -> Unit,
     onLatencyPresetChange: (Int) -> Unit,
@@ -44,6 +46,9 @@ fun AppNavigation(
     onAutoRestartChange: (Boolean) -> Unit,
     onActiveDirectionsChange: (Int) -> Unit,
     onMicSourceChange: (Int) -> Unit,
+    onRecordingFormatChange: (Int) -> Unit,
+    onChooseRecordingDirectory: () -> Unit,
+    onUseDefaultRecordingDirectory: () -> Unit,
     onNotificationEnabledChange: (Boolean) -> Unit,
     onKeepScreenOnChange: (Boolean) -> Unit,
     onScreensaverEnabledChange: (Boolean) -> Unit,
@@ -155,6 +160,8 @@ fun AppNavigation(
                     onToggleCapture = onToggleCapture,
                     onToggleSpeakerMute = onToggleSpeakerMute,
                     onToggleMicMute = onToggleMicMute,
+                    onToggleRecording = onToggleRecording,
+                    onShareRecording = onShareRecording,
                     onToggleLogs = onToggleLogs
                 )
             }
@@ -173,6 +180,9 @@ fun AppNavigation(
                     onAutoRestartChange = onAutoRestartChange,
                     onActiveDirectionsChange = onActiveDirectionsChange,
                     onMicSourceChange = onMicSourceChange,
+                    onRecordingFormatChange = onRecordingFormatChange,
+                    onChooseRecordingDirectory = onChooseRecordingDirectory,
+                    onUseDefaultRecordingDirectory = onUseDefaultRecordingDirectory,
                     onNotificationEnabledChange = onNotificationEnabledChange,
                     onKeepScreenOnChange = onKeepScreenOnChange,
                     onScreensaverEnabledChange = onScreensaverEnabledChange,

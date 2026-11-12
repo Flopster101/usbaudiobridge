@@ -45,6 +45,13 @@ data class MainUiState(
     val speakerMuted: Boolean = false,
     val micMuted: Boolean = false,
     val muteOnMediaButton: Boolean = true,
+    val recordingFormat: Int = 0,
+    val recordingDirectory: String = "Music/UsbAudioBridge",
+    val isRecordingActive: Boolean = false,
+    val isRecordingPending: Boolean = false,
+    val recordingFileName: String? = null,
+    val recordingDuration: String = "0:00",
+    val recordingError: String? = null,
 
     // Appearance
     val themeMode: Int = 0,             // 0 = Auto (system), 1 = Dark, 2 = Light

@@ -16,6 +16,7 @@
 #include "../audio/opensl_engine.h"
 #include "../audio/ring_buffer.h"
 #include "../logging/logging.h"
+#include "../recording/audio_recorder.h"
 
 // Define Globals
 std::atomic<bool> isRunning{false};
@@ -23,6 +24,17 @@ std::atomic<bool> isFinished{true};
 std::atomic<bool> isSpeakerMuted{false};
 std::atomic<bool> isMicMuted{false};
 std::thread bridgeThread;
+std::atomic<bool> audioRecorderAvailable{false};
+std::mutex audioRecorderMutex;
+std::unique_ptr<AudioRecorder> audioRecorder;
+
+void writeAudioRecorder(const uint8_t *data, size_t size) {
+  if (!audioRecorderAvailable.load(std::memory_order_acquire))
+    return;
+  std::lock_guard<std::mutex> lock(audioRecorderMutex);
+  if (audioRecorder)
+    audioRecorder->write(data, size);
+}
 
 // --- Capture Thread ---
 // Report actual period size to bridge
@@ -153,6 +165,7 @@ void captureLoop(unsigned int card, unsigned int device, RingBuffer *rb,
 
     int res = pcm_read(pcm, local_buf.data(), chunk_bytes);
     if (res == 0) {
+      writeAudioRecorder(local_buf.data(), chunk_bytes);
       size_t written = rb->write(local_buf.data(), chunk_bytes);
       // Stall the capture briefly and retry instead of dropping the frames
       // (dropped audio is audible) - the consumer is only backed up because

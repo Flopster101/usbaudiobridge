@@ -74,6 +74,31 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val requestRecordingStoragePermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            audioService?.toggleRecording()
+        } else {
+            appendLog("[App] Storage permission denied. Choose a recording folder in Settings instead.")
+        }
+    }
+
+    private val recordingDirectoryLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                AudioRecordingStore(this, settingsRepo).persistDirectoryPermission(uri)
+                uiState = uiState.copy(
+                    recordingDirectory = AudioRecordingStore(this, settingsRepo).directoryLabel()
+                )
+            } catch (e: Exception) {
+                appendLog("[App] Could not use selected recording folder: ${e.message}")
+            }
+        }
+    }
+
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { _: Boolean ->
@@ -155,6 +180,22 @@ class MainActivity : ComponentActivity() {
                 sampleRate = "$rate Hz",
                 periodSize = "$period frames",
                 currentBuffer = "$buffer frames"
+            )
+        }
+    }
+
+    private val recordingReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent == null) return
+            val bytes = intent.getLongExtra(AudioService.EXTRA_RECORDING_BYTES, 0)
+            val rate = intent.getIntExtra(AudioService.EXTRA_RECORDING_RATE, uiState.sampleRateOption)
+            val seconds = bytes / 4 / rate.coerceAtLeast(1)
+            uiState = uiState.copy(
+                isRecordingActive = intent.getBooleanExtra(AudioService.EXTRA_RECORDING_RUNNING, false),
+                isRecordingPending = intent.getBooleanExtra(AudioService.EXTRA_RECORDING_PENDING, false),
+                recordingFileName = intent.getStringExtra(AudioService.EXTRA_RECORDING_NAME),
+                recordingDuration = String.format(Locale.US, "%d:%02d", seconds / 60, seconds % 60),
+                recordingError = intent.getStringExtra(AudioService.EXTRA_RECORDING_ERROR)
             )
         }
     }
@@ -299,6 +340,8 @@ class MainActivity : ComponentActivity() {
             autoRestartOnOutputChange = settingsRepo.getAutoRestartOnOutputChange(),
             activeDirectionsOption = settingsRepo.getActiveDirections(),
             micSourceOption = settingsRepo.getMicSource(),
+            recordingFormat = settingsRepo.getRecordingFormat(),
+            recordingDirectory = AudioRecordingStore(this, settingsRepo).directoryLabel(),
             notificationEnabled = settingsRepo.getNotificationEnabled(),
             keepScreenOnOption = settingsRepo.getKeepScreenOn(),
             screensaverEnabled = settingsRepo.getScreensaverEnabled(),
@@ -377,6 +420,7 @@ class MainActivity : ComponentActivity() {
         ContextCompat.registerReceiver(this, statsReceiver, IntentFilter(AudioService.ACTION_STATS_UPDATE), ContextCompat.RECEIVER_NOT_EXPORTED)
         ContextCompat.registerReceiver(this, gadgetResultReceiver, IntentFilter(AudioService.ACTION_GADGET_RESULT), ContextCompat.RECEIVER_NOT_EXPORTED)
         ContextCompat.registerReceiver(this, gadgetStatusReceiver, IntentFilter(AudioService.ACTION_GADGET_STATUS), ContextCompat.RECEIVER_NOT_EXPORTED)
+        ContextCompat.registerReceiver(this, recordingReceiver, IntentFilter(AudioService.ACTION_RECORDING_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
 
         setContent {
             LaunchedEffect(Unit) {
@@ -492,6 +536,32 @@ class MainActivity : ComponentActivity() {
                                      audioService?.stopBridge()
                                      // Don't wait for broadcast result for disable
                                  }
+                            },
+                            onToggleRecording = {
+                                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+                                    settingsRepo.getRecordingDirectory() == null &&
+                                    checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    requestRecordingStoragePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                                } else {
+                                    audioService?.toggleRecording()
+                                }
+                            },
+                            onShareRecording = {
+                                audioService?.createRecordingShareIntent()?.let {
+                                    startActivity(Intent.createChooser(it, "Share recording"))
+                                }
+                            },
+                            onRecordingFormatChange = {
+                                uiState = uiState.copy(recordingFormat = it)
+                                settingsRepo.saveRecordingFormat(it)
+                            },
+                            onChooseRecordingDirectory = {
+                                recordingDirectoryLauncher.launch(null)
+                            },
+                            onUseDefaultRecordingDirectory = {
+                                AudioRecordingStore(this, settingsRepo).useDefaultDirectory()
+                                uiState = uiState.copy(recordingDirectory = "Music/UsbAudioBridge")
                             },
                             onToggleCapture = {
                                 if (uiState.isServiceRunning) {
@@ -690,6 +760,8 @@ class MainActivity : ComponentActivity() {
                                     autoRestartOnOutputChange = settingsRepo.getAutoRestartOnOutputChange(),
                                     activeDirectionsOption = settingsRepo.getActiveDirections(),
                                     micSourceOption = settingsRepo.getMicSource(),
+                                    recordingFormat = settingsRepo.getRecordingFormat(),
+                                    recordingDirectory = AudioRecordingStore(this, settingsRepo).directoryLabel(),
                                     notificationEnabled = settingsRepo.getNotificationEnabled(),
                                     showKernelNotice = false,
                                     showOldKernelNotice = false,
@@ -743,6 +815,7 @@ class MainActivity : ComponentActivity() {
                 service.updateUiState()
                 service.refreshNotification()
                 service.broadcastGadgetStatus()
+                service.broadcastRecordingState()
             }.start()
         }
     }
@@ -770,6 +843,7 @@ class MainActivity : ComponentActivity() {
         unregisterReceiver(statsReceiver)
         unregisterReceiver(gadgetResultReceiver)
         unregisterReceiver(gadgetStatusReceiver)
+        unregisterReceiver(recordingReceiver)
         if (uiState.isAppBound) unbindService(connection)
     }
 

@@ -23,6 +23,8 @@
     void onNativeError(java.lang.String);
     void onNativeState(int);
     void onNativeStats(int,int,int);
+    void onNativeRecordingProgress(long);
+    void onNativeRecordingStopped(java.lang.String);
     void onNativeThreadStart(int);
     void onOutputDisconnect();
     int initAudioTrack(int,int);

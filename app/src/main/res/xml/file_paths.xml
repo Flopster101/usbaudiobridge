@@ -3,4 +3,7 @@
     <cache-path
         name="cache"
         path="." />
+    <external-path
+        name="recordings"
+        path="Music/UsbAudioBridge/" />
 </paths>

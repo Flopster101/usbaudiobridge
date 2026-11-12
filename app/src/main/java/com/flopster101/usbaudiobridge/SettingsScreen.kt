@@ -29,6 +29,9 @@ fun SettingsScreen(
     onAutoRestartChange: (Boolean) -> Unit,
     onActiveDirectionsChange: (Int) -> Unit,
     onMicSourceChange: (Int) -> Unit,
+    onRecordingFormatChange: (Int) -> Unit,
+    onChooseRecordingDirectory: () -> Unit,
+    onUseDefaultRecordingDirectory: () -> Unit,
     onNotificationEnabledChange: (Boolean) -> Unit,
     onKeepScreenOnChange: (Boolean) -> Unit,
     onScreensaverEnabledChange: (Boolean) -> Unit,
@@ -449,6 +452,87 @@ fun SettingsScreen(
                         showPeriodDialog = false
                     }
                 )
+            }
+        }
+        item { Spacer(Modifier.height(20.dp)) }
+
+        item {
+            SettingsSectionTitle("Recording")
+            Spacer(Modifier.height(8.dp))
+        }
+
+        item {
+            GroupedSettingsCard(position = SettingsGroupPosition.Top) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("File format", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Records the stereo host audio before playback or speaker mute.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        SegmentedButton(
+                            selected = state.recordingFormat == SettingsRepository.RECORDING_FORMAT_WAV,
+                            onClick = { onRecordingFormatChange(SettingsRepository.RECORDING_FORMAT_WAV) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                            enabled = !state.isRecordingActive && !state.isRecordingPending
+                        ) {
+                            Text("WAV")
+                        }
+                        SegmentedButton(
+                            selected = state.recordingFormat == SettingsRepository.RECORDING_FORMAT_FLAC,
+                            onClick = { onRecordingFormatChange(SettingsRepository.RECORDING_FORMAT_FLAC) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                            enabled = !state.isRecordingActive && !state.isRecordingPending
+                        ) {
+                            Text("FLAC")
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "FLAC uses Android's C2 encoder. Files contain 16-bit stereo PCM at the capture sample rate.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        item { Spacer(Modifier.height(2.dp)) }
+
+        item {
+            GroupedSettingsCard(position = SettingsGroupPosition.Bottom) {
+                ListItem(
+                    headlineContent = { Text("Save folder") },
+                    supportingContent = {
+                        Text(
+                            text = "Tap to choose a folder, or use the default Music/UsbAudioBridge folder.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    trailingContent = {
+                        Text(
+                            text = state.recordingDirectory,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 2,
+                            modifier = Modifier.widthIn(max = 140.dp)
+                        )
+                    },
+                    modifier = Modifier.clickable(enabled = !state.isRecordingActive && !state.isRecordingPending) { onChooseRecordingDirectory() },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+                if (state.recordingDirectory != "Music/UsbAudioBridge") {
+                    HorizontalDivider()
+                    ListItem(
+                        headlineContent = { Text("Use default folder") },
+                        supportingContent = { Text("Music/UsbAudioBridge") },
+                        modifier = Modifier.clickable(enabled = !state.isRecordingActive && !state.isRecordingPending) { onUseDefaultRecordingDirectory() },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                    )
+                }
             }
         }
         item { Spacer(Modifier.height(20.dp)) }

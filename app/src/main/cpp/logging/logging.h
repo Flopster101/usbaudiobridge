@@ -27,6 +27,8 @@ void reportErrorToJava(const char* fmt, ...);
 void reportOutputDisconnectToJava();
 void reportStateToJava(int stateCode);
 void reportStatsToJava(int rate, int period, int bufferSize);
+void reportRecordingProgressToJava(int64_t pcmBytes);
+void reportRecordingStoppedToJava(const char* error);
 
 // Thread priority helper (uses reportTidToJava)
 void setHighPriority();

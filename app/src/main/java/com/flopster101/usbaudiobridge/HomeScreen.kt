@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
@@ -53,6 +54,8 @@ fun HomeScreen(
     onToggleCapture: () -> Unit,
     onToggleSpeakerMute: () -> Unit,
     onToggleMicMute: () -> Unit,
+    onToggleRecording: () -> Unit,
+    onShareRecording: () -> Unit,
     onToggleLogs: () -> Unit
 ) {
         LazyColumn(
@@ -160,6 +163,62 @@ fun HomeScreen(
                         }
 
                         Spacer(Modifier.height(16.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Record incoming audio",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = when {
+                                        state.isRecordingPending && state.isRecordingActive -> "Stopping..."
+                                        state.isRecordingPending -> "Starting..."
+                                        state.isRecordingActive -> "${state.recordingDuration} · ${state.recordingFileName?.substringAfterLast('.')?.uppercase() ?: ""}"
+                                        state.recordingError != null -> state.recordingError
+                                        state.recordingFileName != null -> "Saved ${state.recordingFileName}"
+                                        else -> "Off · ${if (state.recordingFormat == 1) "FLAC" else "WAV"}"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (state.recordingError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2
+                                )
+                            }
+                            if (state.recordingFileName != null && !state.isRecordingActive && !state.isRecordingPending && state.recordingError == null) {
+                                IconButton(onClick = onShareRecording) {
+                                    Icon(
+                                        Icons.Filled.Share,
+                                        contentDescription = "Share last recording",
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            FilledTonalButton(
+                                onClick = onToggleRecording,
+                                enabled = state.isServiceRunning && (state.runningDirections and 1) != 0 && !state.isRecordingPending,
+                                contentPadding = PaddingValues(horizontal = 16.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.FiberManualRecord,
+                                    contentDescription = null,
+                                    tint = if (state.isRecordingActive) MaterialTheme.colorScheme.error else LocalContentColor.current,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (state.isRecordingActive) "Stop" else "Record")
+                            }
+                        }
+
+                        Spacer(Modifier.height(12.dp))
                         HorizontalDivider()
                         Spacer(Modifier.height(12.dp))
 

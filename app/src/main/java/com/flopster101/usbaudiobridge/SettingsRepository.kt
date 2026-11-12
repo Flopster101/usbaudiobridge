@@ -3,6 +3,11 @@ package com.flopster101.usbaudiobridge
 import android.content.Context
 
 class SettingsRepository(context: Context) {
+    companion object {
+        const val RECORDING_FORMAT_WAV = 0
+        const val RECORDING_FORMAT_FLAC = 1
+    }
+
     private val prefs = context.getSharedPreferences("UsbAudioSettings", Context.MODE_PRIVATE)
 
     fun saveBufferSize(size: Float) = prefs.edit().putFloat("buffer_size", size).apply()
@@ -48,6 +53,16 @@ class SettingsRepository(context: Context) {
     // 0=Unspecified/Auto, 1=Generic, 5=Camcorder, 6=VoiceRec, 7=VoiceComm, 9=Unprocessed, 10=Performance
     fun saveMicSource(source: Int) = prefs.edit().putInt("mic_source", source).apply()
     fun getMicSource(): Int = prefs.getInt("mic_source", 6) // Default to Voice Recognition (6) for best results usually
+
+    fun saveRecordingFormat(format: Int) = prefs.edit().putInt("recording_format", format).apply()
+    fun getRecordingFormat(): Int = prefs.getInt("recording_format", RECORDING_FORMAT_WAV)
+
+    fun saveRecordingDirectory(uri: String?) {
+        val editor = prefs.edit()
+        if (uri == null) editor.remove("recording_directory") else editor.putString("recording_directory", uri)
+        editor.apply()
+    }
+    fun getRecordingDirectory(): String? = prefs.getString("recording_directory", null)
 
     // Kernel compatibility notice
     fun shouldShowKernelNotice(): Boolean = !prefs.getBoolean("kernel_notice_dismissed", false)

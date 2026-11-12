@@ -203,6 +203,56 @@ void reportStatsToJava(int rate, int period, int bufferSize) {
     }
 }
 
+void reportRecordingProgressToJava(int64_t pcmBytes) {
+    if (!javaVM || !serviceObj) return;
+
+    JNIEnv* env;
+    bool attached = false;
+    int getEnvStat = javaVM->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (getEnvStat == JNI_EDETACHED) {
+        if (javaVM->AttachCurrentThread(&env, nullptr) != 0) return;
+        attached = true;
+    } else if (getEnvStat != JNI_OK) {
+        return;
+    }
+
+    jclass cls = env->GetObjectClass(serviceObj);
+    jmethodID mid = env->GetMethodID(cls, "onNativeRecordingProgress", "(J)V");
+    if (mid) {
+        env->CallVoidMethod(serviceObj, mid, (jlong)pcmBytes);
+    }
+    env->DeleteLocalRef(cls);
+    if (attached) {
+        javaVM->DetachCurrentThread();
+    }
+}
+
+void reportRecordingStoppedToJava(const char* error) {
+    if (!javaVM || !serviceObj) return;
+
+    JNIEnv* env;
+    bool attached = false;
+    int getEnvStat = javaVM->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (getEnvStat == JNI_EDETACHED) {
+        if (javaVM->AttachCurrentThread(&env, nullptr) != 0) return;
+        attached = true;
+    } else if (getEnvStat != JNI_OK) {
+        return;
+    }
+
+    jclass cls = env->GetObjectClass(serviceObj);
+    jmethodID mid = env->GetMethodID(cls, "onNativeRecordingStopped", "(Ljava/lang/String;)V");
+    if (mid) {
+        jstring jError = env->NewStringUTF(error);
+        env->CallVoidMethod(serviceObj, mid, jError);
+        env->DeleteLocalRef(jError);
+    }
+    env->DeleteLocalRef(cls);
+    if (attached) {
+        javaVM->DetachCurrentThread();
+    }
+}
+
 void setHighPriority() {
     pid_t tid = syscall(SYS_gettid);
 
