@@ -21,9 +21,9 @@ data class GadgetStrategy(
         fun forEnvironment(env: GadgetEnvironment): GadgetStrategy = when (env) {
             GadgetEnvironment.SAMSUNG_LIBPIXELUSB -> GadgetStrategy(
                 environment = env,
-                supportsKeepAdb = false,
-                keepAdbReason = "libpixelusb (LineageOS/AOSP gadget HAL) re-adds ADB after every function change " +
-                    "and its ffs monitor loops on adbd's bind attempts. ADB cannot be preserved here."
+                supportsKeepAdb = true,
+                keepAdbReason = "The libpixelusb FFS monitor is paused while the custom gadget is active, " +
+                    "allowing ADB to remain linked alongside USB audio."
             )
             GadgetEnvironment.SAMSUNG_STOCK_INITRC -> GadgetStrategy(
                 environment = env,
