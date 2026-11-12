@@ -70,13 +70,15 @@ object UsbGadgetManager {
                 .ifBlank { runRootCommandGetOutput("getprop ro.product.manufacturer") }
             val board = runRootCommandGetOutput("getprop ro.board.platform")
             val hardware = runRootCommandGetOutput("getprop ro.hardware")
+            val samsungHalStopped = vendorManufacturer.contains("samsung", ignoreCase = true) &&
+                runRootCommandGetOutput("getprop init.svc.vendor.usb-gadget-hal") == "stopped"
 
             // Match both HAL families (gadget-service.* and usb@1.x-service)
             val halProcs = runRootCommandGetOutput(
                 "ps -A 2>/dev/null | grep -iE 'usb.*gadget|gadget.*usb|usb@1\\.|usb@2\\.'"
             )
             val env = when {
-                halProcs.contains("gadget-service.samsung", ignoreCase = true) ->
+                halProcs.contains("gadget-service.samsung", ignoreCase = true) || samsungHalStopped ->
                     GadgetEnvironment.SAMSUNG_LIBPIXELUSB
                 halProcs.contains("gadget-service.qti", ignoreCase = true) ->
                     GadgetEnvironment.QUALCOMM_HAL
@@ -107,6 +109,31 @@ object UsbGadgetManager {
 
         cachedStrategy = strategy
         return strategy
+    }
+
+    private fun stopConflictingGadgetHal(strategy: GadgetStrategy, logCallback: (String) -> Unit): Boolean {
+        if (strategy.environment != GadgetEnvironment.SAMSUNG_LIBPIXELUSB) return true
+
+        logCallback("[Gadget] Stopping gadget HAL FFS monitor before taking over USB.")
+        if (!runRootCommand("setprop ctl.stop vendor.usb-gadget-hal", logCallback)) return false
+        for (i in 1..20) {
+            if (runRootCommandGetOutput("getprop init.svc.vendor.usb-gadget-hal") == "stopped") return true
+            Thread.sleep(100)
+        }
+        logCallback("[Gadget] Could not stop the gadget HAL FFS monitor.")
+        return false
+    }
+
+    private fun restartGadgetHal(logCallback: (String) -> Unit) {
+        if (detectGadgetStrategy().environment != GadgetEnvironment.SAMSUNG_LIBPIXELUSB) return
+
+        logCallback("[Gadget] Restarting gadget HAL for USB restoration.")
+        runRootCommand("setprop ctl.start vendor.usb-gadget-hal", logCallback)
+        for (i in 1..30) {
+            if (runRootCommandGetOutput("getprop init.svc.vendor.usb-gadget-hal") == "running") return
+            Thread.sleep(100)
+        }
+        logCallback("[Gadget] WARNING: Gadget HAL did not enter running state.")
     }
 
     private fun getRootSolution(): String {
@@ -501,6 +528,9 @@ object UsbGadgetManager {
             logCallback("[Gadget] WARNING: No original gadget state to restore. USB may be left dead on disable.")
         }
 
+        // Stop libpixelusb's stale FFS monitor before it can rebind the custom gadget.
+        if (!stopConflictingGadgetHal(strategy, logCallback)) return false
+
         // Step 1: Try soft unbind first
         val softUnbindSucceeded = softUnbind(logCallback)
 
@@ -763,6 +793,7 @@ object UsbGadgetManager {
 
         // Restart adbd BEFORE the rebuild so its ffs monitor can rebind ffs.adb
         // (Samsung HAL re-adds Adb on every function change).
+        restartGadgetHal(logCallback)
         runRootCommands(listOf("setprop ctl.start adbd"), logCallback)
         logCallback("[Gadget] Restoring original USB configuration...")
         runRootCommands(listOf("svc usb setFunctions $placeholder"), logCallback)
@@ -868,11 +899,16 @@ object UsbGadgetManager {
     }
 
     suspend fun applySeLinuxPolicy(logCallback: (String) -> Unit) {
+        val appDomain = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            "untrusted_app_all"
+        } else {
+            "untrusted_app"
+        }
         val rules = listOf(
             "typeattribute audio_device mlstrustedobject",
-            "allow untrusted_app audio_device chr_file { read write open ioctl getattr map }",
-            "allow untrusted_app audio_device dir { search getattr read open }",
-            "allow untrusted_app cgroup dir { search getattr read open }"
+            "allow $appDomain audio_device chr_file { read write open ioctl getattr map }",
+            "allow $appDomain audio_device dir { search getattr read open }",
+            "allow $appDomain cgroup dir { search getattr read open }"
         )
 
         val tmpPath = "/data/local/tmp/uac2_policy.te"
