@@ -9,6 +9,7 @@ class SettingsRepository(context: Context) {
     }
 
     private val prefs = context.getSharedPreferences("UsbAudioSettings", Context.MODE_PRIVATE)
+    val nativeLibraryDir: String = context.applicationInfo.nativeLibraryDir
 
     fun saveBufferSize(size: Float) = prefs.edit().putFloat("buffer_size", size).apply()
     fun getBufferSize(): Float = prefs.getFloat("buffer_size", 4800f)
@@ -101,6 +102,23 @@ class SettingsRepository(context: Context) {
 
     fun saveScreensaverFullscreen(enabled: Boolean) = prefs.edit().putBoolean("screensaver_fullscreen", enabled).apply()
     fun getScreensaverFullscreen(): Boolean = prefs.getBoolean("screensaver_fullscreen", true) // Default true
+
+    fun savePausedHalMonitor(pid: Int, tid: Int, tracerPid: Int) = prefs.edit()
+        .putInt("paused_hal_pid", pid)
+        .putInt("paused_hal_tid", tid)
+        .putInt("paused_hal_tracer_pid", tracerPid)
+        .apply()
+
+    fun getPausedHalMonitor(): Triple<Int, Int, Int>? {
+        val pid = prefs.getInt("paused_hal_pid", -1)
+        val tid = prefs.getInt("paused_hal_tid", -1)
+        val tracerPid = prefs.getInt("paused_hal_tracer_pid", -1)
+        return if (pid > 0 && tid > 0 && tracerPid > 0) Triple(pid, tid, tracerPid) else null
+    }
+
+    fun clearPausedHalMonitor() {
+        prefs.edit().remove("paused_hal_pid").remove("paused_hal_tid").remove("paused_hal_tracer_pid").apply()
+    }
 
     fun saveOriginalIdentity(manufacturer: String, product: String, serial: String) {
         prefs.edit()

@@ -21,6 +21,13 @@ target_include_directories(tinyalsa PUBLIC
 # Build Oboe from source
 add_subdirectory(oboe)
 
+add_executable(gadget_monitor_pause gadget_monitor_pause.c)
+target_link_libraries(gadget_monitor_pause PRIVATE log)
+add_custom_command(TARGET gadget_monitor_pause POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:gadget_monitor_pause>
+        ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libgadget_monitor_pause.so
+)
+
 # Define our JNI library
 add_library(usbaudio SHARED
     native-lib.cpp

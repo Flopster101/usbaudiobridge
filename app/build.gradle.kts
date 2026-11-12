@@ -46,6 +46,7 @@ android {
         
         externalNativeBuild {
             cmake {
+                targets.add("gadget_monitor_pause")
                 cppFlags("")
                 arguments += listOf("-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON")
             }
@@ -106,6 +107,9 @@ android {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
         }
+    }
+    packaging {
+        jniLibs.useLegacyPackaging = true
     }
     buildFeatures {
         viewBinding = true

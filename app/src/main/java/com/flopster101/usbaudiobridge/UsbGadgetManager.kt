@@ -111,29 +111,65 @@ object UsbGadgetManager {
         return strategy
     }
 
-    private fun stopConflictingGadgetHal(strategy: GadgetStrategy, logCallback: (String) -> Unit): Boolean {
+    private fun pauseGadgetHalMonitor(
+        strategy: GadgetStrategy,
+        settingsRepo: SettingsRepository?,
+        logCallback: (String) -> Unit
+    ): Boolean {
         if (strategy.environment != GadgetEnvironment.SAMSUNG_LIBPIXELUSB) return true
-
-        logCallback("[Gadget] Stopping gadget HAL FFS monitor before taking over USB.")
-        if (!runRootCommand("setprop ctl.stop vendor.usb-gadget-hal", logCallback)) return false
-        for (i in 1..20) {
-            if (runRootCommandGetOutput("getprop init.svc.vendor.usb-gadget-hal") == "stopped") return true
-            Thread.sleep(100)
+        settingsRepo?.getPausedHalMonitor()?.let {
+            if (runRootCommand("test -d /proc/${it.third}", {})) return true
+            settingsRepo.clearPausedHalMonitor()
         }
-        logCallback("[Gadget] Could not stop the gadget HAL FFS monitor.")
-        return false
+
+        val pid = runRootCommandGetOutput("pidof android.hardware.usb.gadget-service.samsung")
+            .substringBefore(' ').toIntOrNull()
+        if (pid == null) {
+            logCallback("[Gadget] Could not find Samsung gadget HAL process.")
+            return false
+        }
+        val monitorPaths = runRootCommandGetOutput(
+            "grep -l '^do_epoll_wait$' /proc/$pid/task/*/wchan"
+        ).lineSequence().filter { it.isNotBlank() }.toList()
+        val tid = monitorPaths.singleOrNull()?.split('/')?.getOrNull(4)?.toIntOrNull()
+        if (tid == null) {
+            logCallback("[Gadget] Could not identify the HAL FFS monitor thread.")
+            return false
+        }
+
+        val helper = "${settingsRepo?.nativeLibraryDir}/libgadget_monitor_pause.so"
+        logCallback("[Gadget] Pausing HAL FFS monitor thread $tid (PID $pid).")
+        val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "$helper pause $pid $tid"))
+        val tracerPid = process.inputStream.bufferedReader().readLine()?.trim()?.toIntOrNull()
+        if (tracerPid == null || !runRootCommand("test -d /proc/$tracerPid", {})) {
+            logCallback("[Gadget] Could not pause the HAL FFS monitor.")
+            return false
+        }
+        settingsRepo?.savePausedHalMonitor(pid, tid, tracerPid)
+        return true
     }
 
-    private fun restartGadgetHal(logCallback: (String) -> Unit) {
-        if (detectGadgetStrategy().environment != GadgetEnvironment.SAMSUNG_LIBPIXELUSB) return
-
-        logCallback("[Gadget] Restarting gadget HAL for USB restoration.")
-        runRootCommand("setprop ctl.start vendor.usb-gadget-hal", logCallback)
-        for (i in 1..30) {
-            if (runRootCommandGetOutput("getprop init.svc.vendor.usb-gadget-hal") == "running") return
-            Thread.sleep(100)
+    fun resumeGadgetHalMonitor(settingsRepo: SettingsRepository?, logCallback: (String) -> Unit): Boolean {
+        val paused = settingsRepo?.getPausedHalMonitor() ?: return true
+        val (_, tid, tracerPid) = paused
+        val tracer = runRootCommandGetOutput("cat /proc/$tracerPid/cmdline")
+        if (!tracer.contains("libgadget_monitor_pause.so")) {
+            settingsRepo.clearPausedHalMonitor()
+            return true
         }
-        logCallback("[Gadget] WARNING: Gadget HAL did not enter running state.")
+
+        logCallback("[Gadget] Resuming HAL FFS monitor thread $tid (tracer $tracerPid).")
+        val helper = "${settingsRepo?.nativeLibraryDir}/libgadget_monitor_pause.so"
+        if (!runRootCommand("$helper resume $tracerPid", logCallback)) return false
+        for (i in 1..20) {
+            if (!runRootCommand("test -d /proc/$tracerPid", {})) {
+                settingsRepo.clearPausedHalMonitor()
+                return true
+            }
+            Thread.sleep(50)
+        }
+        logCallback("[Gadget] Could not detach from the HAL FFS monitor.")
+        return false
     }
 
     private fun getRootSolution(): String {
@@ -529,7 +565,7 @@ object UsbGadgetManager {
         }
 
         // Stop libpixelusb's stale FFS monitor before it can rebind the custom gadget.
-        if (!stopConflictingGadgetHal(strategy, logCallback)) return false
+        if (!pauseGadgetHalMonitor(strategy, settingsRepo, logCallback)) return false
 
         // Step 1: Try soft unbind first
         val softUnbindSucceeded = softUnbind(logCallback)
@@ -738,6 +774,7 @@ object UsbGadgetManager {
 
     private suspend fun disableGadgetInternal(logCallback: (String) -> Unit, settingsRepo: SettingsRepository? = null) {
         logCallback("[Gadget] Disabling USB gadget...")
+        if (!resumeGadgetHalMonitor(settingsRepo, logCallback)) return
 
         // Restore strings if available
         var restored = false
@@ -793,7 +830,6 @@ object UsbGadgetManager {
 
         // Restart adbd BEFORE the rebuild so its ffs monitor can rebind ffs.adb
         // (Samsung HAL re-adds Adb on every function change).
-        restartGadgetHal(logCallback)
         runRootCommands(listOf("setprop ctl.start adbd"), logCallback)
         logCallback("[Gadget] Restoring original USB configuration...")
         runRootCommands(listOf("svc usb setFunctions $placeholder"), logCallback)
